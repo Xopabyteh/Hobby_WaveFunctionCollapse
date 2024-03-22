@@ -1,4 +1,5 @@
-﻿using System.Drawing;
+﻿using System;
+using System.Drawing;
 using System.Security.Cryptography.X509Certificates;
 
 namespace WaveFunctionCollapseCore;
@@ -20,26 +21,41 @@ public class Core
     }
     private void InitializeParticles()
     {
+        Dictionary<ParticleHashCode, double> p(ParticleHashCode[] particleHashCodes, double[] chances)
+            => particleHashCodes
+                .Zip(chances, (hash, chance) => (hash, chance))
+                .ToDictionary(x => x.hash, x => x.chance);
+
         var grass = new Particle(
             0,
             Color.Green,
-            [0, 1],
-            [0],
-            [0],
-            [0]);
+            p([0, 1], [0.5, 0.5]),
+            p([0], [1]),
+            p([0], [1]),
+            p([0], [1]));
 
         var sky = new Particle(
             1,
             Color.SkyBlue,
-            [1],
-            [0, 1],
-            [1],
-            [1]);
+            p([1, 2], [0.9, 0.1]),
+            p([1, 2], [0.9, 0.1]),
+            p([1, 2], [0.9, 0.1]),
+            p([1, 2], [0.9, 0.1]));
+
+        var cloud = new Particle(
+            2,
+            Color.White,
+            p([1, 2], [0.1, 0.9]),
+            p([1, 2], [0.1, 0.9]),
+            p([1, 2], [0.1, 0.9]),
+            p([1, 2], [0.1, 0.9]));
+
 
         availableParticles = new()
         {
             [0] = grass,
-            [1] = sky
+            [1] = sky,
+            [2] = cloud
         };
         availableParticlesValuesCache = availableParticles.Values.ToArray();
         availableParticleHashCodesCache = availableParticles.Keys.ToArray();
@@ -83,10 +99,49 @@ public class Core
     private Particle CollapseParticle(int x, int y)
     {
         var particleEntropy = sceneEntropy[x, y];
-        var chosenParticle =
-            particleEntropy.PossibleParticles.Length == 1
-                ? particleEntropy.PossibleParticles[0]
-                : particleEntropy.PossibleParticles[Random.Shared.Next(particleEntropy.PossibleParticles.Length)];
+        Particle chosenParticle;
+        if (particleEntropy.PossibleParticles.Length == 1)
+        {
+            // Choose the only possible one
+            chosenParticle = particleEntropy.PossibleParticles[0];
+        }
+        else
+        {
+            // Choose randomly from available, considering what other particles want to have as neighbors
+            var neighbors = GetNeighbors(x, y);
+            double ParticleScoreBasedOnNeighbors(Particle p) =>
+                                                            neighbors[0] == default ? 1 : p.AllowedRight[neighbors[0].HashCode]
+                                                          * (neighbors[1] == default ? 1 : p.AllowedBelow[neighbors[1].HashCode])
+                                                          * (neighbors[2] == default ? 1 : p.AllowedLeft[neighbors[2].HashCode])
+                                                          * (neighbors[3] == default ? 1 : p.AllowedAbove[neighbors[3].HashCode]);
+            //neighbors[0] == default ? 1 : neighbors[0].AllowedLeft[p.HashCode]
+            //                              * (neighbors[1] == default ? 1 : neighbors[1].AllowedAbove[p.HashCode])
+            //                              * (neighbors[2] == default ? 1 : neighbors[2].AllowedRight[p.HashCode])
+            //                              * (neighbors[3] == default ? 1 : neighbors[3].AllowedBelow[p.HashCode]);
+
+            static Particle WeightedRandom((Particle Particle, double Score)[] items)
+            {
+                double totalWeight = items.Sum(item => item.Score);
+                double randomValue = Random.Shared.NextDouble() * totalWeight;
+
+                foreach (var item in items)
+                {
+                    randomValue -= item.Score;
+                    if (randomValue <= 0)
+                        return item.Particle;
+                }
+
+                // Shouldn't reach here, but return last item just in case
+                return items.Last().Particle;
+            }
+
+            var scoredPossibleParticles = particleEntropy.PossibleParticles
+                .Select(p => (p, ParticleScoreBasedOnNeighbors(p)))
+                .ToArray();
+
+
+            chosenParticle = WeightedRandom(scoredPossibleParticles);
+        }
 
         scene[x, y] = chosenParticle;
         return chosenParticle;
@@ -119,16 +174,16 @@ public class Core
 
             var availableFromRight = neighbors[0] == default
                 ? availableParticleHashCodesCache 
-                : neighbors[0].AllowedLeft; 
+                : neighbors[0].AllowedLeftParticlesCache; 
             var availableFromBelow = neighbors[1] == default
                 ? availableParticleHashCodesCache
-                : neighbors[1].AllowedAbove;
+                : neighbors[1].AllowedAboveParticlesCache;
             var availableFromLeft = neighbors[2] == default 
                 ? availableParticleHashCodesCache 
-                : neighbors[2].AllowedRight;
+                : neighbors[2].AllowedRightParticlesCache;
             var availableFromAbove = neighbors[3] == default 
                 ? availableParticleHashCodesCache 
-                : neighbors[3].AllowedBelow;
+                : neighbors[3].AllowedBelowParticlesCache;
 
             // The common particles
             var possibleParticles = availableParticlesValuesCache

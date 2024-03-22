@@ -10,8 +10,8 @@ namespace Client;
 /// </summary>
 public partial class MainWindow : Window
 {
-    private const int k_SceneWidth = 64;
-    private const int k_SceneHeight = 64;
+    private const int k_SceneWidth = 32;
+    private const int k_SceneHeight = 32;
 
     public MainWindow()
     {
